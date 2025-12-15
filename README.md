@@ -6,13 +6,14 @@ In this project, I store helpful scripts that help me in development, DevOps, an
 
 ### VS Code Launcher (`vscode_launcher.py`)
 
-A terminal-based UI (TUI) launcher for Visual Studio Code projects. It reads your recently opened projects from VS Code's state database and allows you to quickly launch them.
+A terminal-based UI (TUI) project launcher for Visual Studio Code and other IDEs. It reads your recently opened projects from VS Code's state database and allows you to quickly launch them.
 
 **Features:**
 - **Recent Projects:** Automatically lists projects from VS Code history.
 - **Search:** Fuzzy search through your projects.
+- **Unified History:** Aggregates recent projects from all installed IDEs (VS Code, Insiders, Cursor, Antigravity, etc.).
+- **Dynamic IDE Support:** Automatically detects installed IDEs.
 - **Pinning:** Pin frequently used projects to the top of the list.
-- **Modes:** Support for different VS Code versions (e.g., Code Insiders, Antigravity).
 - **Terminal Integration:** Quickly open a terminal in the selected project directory.
 - **New Project:** Create new project directories directly from the launcher.
 
@@ -32,7 +33,8 @@ Run the script directly from the terminal:
 - `t`: Open terminal in selected project
 - `n`: Create a new project
 - `o`: Open a specific path
-- `TAB` / `s`: Switch VS Code mode
+- `TAB` / `s`: Cycle through discovered IDEs (VS Code, Cursor, etc.)
+
 - `q`: Quit
 
 **Requirements:**

@@ -4,6 +4,7 @@ import sqlite3
 import json
 import os
 import subprocess
+import shutil
 import sys
 from urllib.parse import urlparse, unquote
 CONFIG_DIR = os.path.expanduser("~/.config/vscode_launcher")
@@ -24,31 +25,64 @@ def save_config(config):
     with open(CONFIG_FILE, 'w') as f:
         json.dump(config, f, indent=2)
 
-DB_PATH_INSIDERS = "/home/prashant/.config/Code - Insiders/User/globalStorage/state.vscdb"
-DB_PATH_ANTIGRAVITY = "/home/prashant/.config/Antigravity/User/globalStorage/state.vscdb"
+# Dynamic Home Path
+HOME = os.path.expanduser("~")
 
-MODES = {
-    "insiders": {"dbs": [DB_PATH_INSIDERS, DB_PATH_ANTIGRAVITY], "cmd": "code-insiders", "label": "VS Code Insiders"},
-    "antigravity": {"dbs": [DB_PATH_INSIDERS, DB_PATH_ANTIGRAVITY], "cmd": "antigravity", "label": "Antigravity"}
-}
+# Known IDE configurations
+KNOWN_IDES = [
+    {"id": "code", "config": "Code", "cmd": "code", "label": "VS Code"},
+    {"id": "insiders", "config": "Code - Insiders", "cmd": "code-insiders", "label": "VS Code Insiders"},
+    {"id": "antigravity", "config": "Antigravity", "cmd": "antigravity", "label": "Antigravity"},
+    {"id": "cursor", "config": "Cursor", "cmd": "cursor", "label": "Cursor"},
+    {"id": "vscodium", "config": "VSCodium", "cmd": "codium", "label": "VSCodium"},
+]
 
-MODE_ORDER = ["insiders", "antigravity"]
+def discover_ides():
+    valid_modes = {}
+    valid_dbs = []
+    mode_order = []
+    
+    for ide in KNOWN_IDES:
+        config_path = os.path.join(HOME, ".config", ide["config"])
+        db_path = os.path.join(config_path, "User", "globalStorage", "state.vscdb")
+        
+        # Check if config/db exists to consider it for history
+        if os.path.exists(config_path):
+             if os.path.exists(db_path):
+                 valid_dbs.append(db_path)
+             
+             # Check if binary exists to allow launching
+             # We rely on shutil.which to find it in PATH
+             if shutil.which(ide["cmd"]):
+                 valid_modes[ide["id"]] = {
+                     "cmd": ide["cmd"],
+                     "label": ide["label"]
+                 }
+                 mode_order.append(ide["id"])
+    
+    # Fallback if nothing found?
+    if not valid_modes:
+        # Defaults just in case avoiding crash
+        pass
 
-def get_projects(mode="insiders"):
+    return valid_modes, mode_order, valid_dbs
+
+# Initialize discovery
+MODES, MODE_ORDER, ALL_DB_PATHS = discover_ides()
+
+# If no modes found, provide a dummy one to avoid crash or loop issues
+if not MODES:
+    MODES = {"code": {"cmd": "code", "label": "VS Code"}}
+    MODE_ORDER = ["code"]
+
+def get_projects(mode=None):
+    # Mode argument is kept for compatibility but ignored for DB fetching 
+    # as we now aggregate ALL known DBs.
     projects_list = []
     seen = set()
     
-    # Default to insiders configuration for unknown modes
-    mode_config = MODES.get(mode, MODES["insiders"])
-    db_paths = mode_config.get("dbs", [mode_config.get("db")]) # Handle backward compat if needed, though we updated MODES
-    
-    for db_path in db_paths:
-        if not db_path: continue
-        
+    for db_path in ALL_DB_PATHS:
         try:
-            if not os.path.exists(db_path):
-                continue
-                
             conn = sqlite3.connect(db_path)
             cursor = conn.cursor()
             cursor.execute("SELECT value FROM ItemTable WHERE key = 'history.recentlyOpenedPathsList'")
