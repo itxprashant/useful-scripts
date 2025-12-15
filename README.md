@@ -1,4 +1,4 @@
-# Helpful Scripts
+# Useful Scripts
 
 In this project, I store helpful scripts that help me in development, DevOps, and general productivity.
 
