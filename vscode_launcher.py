@@ -217,7 +217,7 @@ def draw_menu(stdscr, selected_row_idx, projects, search_query="", pinned=set(),
     if search_query:
         footer_text = " ENTER: Open | ESC: Clear Search | Type to filter "
     else:
-        footer_text = " ENTER: Open | n: New | o: Open Path | /: Search | p: Pin | t: Terminal | TAB: Switch | q: Quit "
+        footer_text = " ENTER: Open | n: New | o: Open path | /: Search | p: Pin | x: Remove | t: Terminal | TAB: Switch | q: Quit "
         
     # Truncate footer if too long
     if len(footer_text) > w - 2:
@@ -323,6 +323,47 @@ def get_input(stdscr, y, prompt, default_text="", is_path=False):
     curses.curs_set(0)
     return "".join(input_text).strip()
 
+def remove_project(project_path):
+    """Removes the project_path from all discovered state databases."""
+    for db_path in ALL_DB_PATHS:
+        try:
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT value FROM ItemTable WHERE key = 'history.recentlyOpenedPathsList'")
+            row = cursor.fetchone()
+            if row:
+                data = json.loads(row[0])
+                entries = data.get('entries', [])
+                
+                new_entries = []
+                modified = False
+                for entry in entries:
+                    uri = entry.get('folderUri') or entry.get('fileUri')
+                    if uri:
+                        parsed = urlparse(uri)
+                        path = ""
+                        if parsed.scheme == 'file':
+                            path = unquote(parsed.path)
+                        else:
+                            path = uri
+                        
+                        if path == project_path:
+                            modified = True
+                            continue # Skip this entry to remove it
+                    
+                    new_entries.append(entry)
+                
+                if modified:
+                    data['entries'] = new_entries
+                    new_json = json.dumps(data)
+                    cursor.execute("UPDATE ItemTable SET value = ? WHERE key = 'history.recentlyOpenedPathsList'", (new_json,))
+                    conn.commit()
+        except Exception as e:
+            pass
+        finally:
+            if 'conn' in locals():
+                conn.close()
+
 def main(stdscr):
     # Initialize colors
     curses.start_color()
@@ -409,6 +450,19 @@ def main(stdscr):
                 current_row += 1
             elif key == ord('q') or key == ord('Q'):
                 break
+            elif key == ord('x') or key == ord('X'):
+                 if filtered_projects:
+                    selected = filtered_projects[current_row]
+                    # Remove from DBs
+                    remove_project(selected)
+                    # Remove from pinned if present
+                    if selected in pinned:
+                        pinned.remove(selected)
+                        config["pinned"] = list(pinned)
+                        save_config(config)
+                    # Refresh list
+                    all_projects = refresh_projects()
+                    # current_row will be clamped in next loop iteration
             elif key == ord('/'):
                 search_mode = True
                 search_query = ""

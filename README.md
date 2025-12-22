@@ -34,6 +34,7 @@ Run the script directly from the terminal:
 - `n`: Create a new project
 - `o`: Open a specific path
 - `TAB` / `s`: Cycle through discovered IDEs (VS Code, Cursor, etc.)
+- `x`: Remove selected project from all databases
 
 - `q`: Quit
 
