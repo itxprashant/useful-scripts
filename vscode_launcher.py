@@ -12,12 +12,12 @@ CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 
 def load_config():
     if not os.path.exists(CONFIG_FILE):
-        return {"pinned": [], "mode": "insiders"}
+        return {"pinned": [], "mode": "code"}
     try:
         with open(CONFIG_FILE, 'r') as f:
             return json.load(f)
     except:
-        return {"pinned": [], "mode": "insiders"}
+        return {"pinned": [], "mode": "code"}
 
 def save_config(config):
     if not os.path.exists(CONFIG_DIR):
@@ -31,9 +31,8 @@ HOME = os.path.expanduser("~")
 # Known IDE configurations
 KNOWN_IDES = [
     {"id": "code", "config": "Code", "cmd": "code", "label": "VS Code"},
-    {"id": "insiders", "config": "Code - Insiders", "cmd": "code-insiders", "label": "VS Code Insiders"},
-    {"id": "antigravity", "config": "Antigravity", "cmd": "antigravity", "label": "Antigravity"},
     {"id": "cursor", "config": "Cursor", "cmd": "cursor", "label": "Cursor"},
+    {"id": "antigravity", "config": "Antigravity", "cmd": "antigravity", "label": "Antigravity"},
     {"id": "vscodium", "config": "VSCodium", "cmd": "codium", "label": "VSCodium"},
 ]
 
@@ -76,12 +75,18 @@ if not MODES:
     MODE_ORDER = ["code"]
 
 def get_projects(mode=None):
-    # Mode argument is kept for compatibility but ignored for DB fetching 
+    # Mode argument is kept for compatibility but ignored for DB fetching
     # as we now aggregate ALL known DBs.
-    projects_list = []
-    seen = set()
-    
+    # VS Code stores entries in MRU order (most recent first) per DB.
+    # We rank each path by (db_mtime_desc, position_in_db) so the most
+    # recently accessed project across ALL IDEs ends up first.
+    best_rank = {}  # path -> (-db_mtime, position)
+
     for db_path in ALL_DB_PATHS:
+        try:
+            db_mtime = os.path.getmtime(db_path)
+        except OSError:
+            db_mtime = 0
         try:
             conn = sqlite3.connect(db_path)
             cursor = conn.cursor()
@@ -90,26 +95,28 @@ def get_projects(mode=None):
             if row:
                 data = json.loads(row[0])
                 entries = data.get('entries', [])
-                for entry in entries:
+                for position, entry in enumerate(entries):
                     uri = entry.get('folderUri') or entry.get('fileUri')
-                    if uri:
-                        parsed = urlparse(uri)
-                        path = ""
-                        if parsed.scheme == 'file':
-                            path = unquote(parsed.path)
-                        else:
-                            path = uri
-                        
-                        if path and path not in seen:
-                            seen.add(path)
-                            projects_list.append(path)
-        except Exception as e:
+                    if not uri:
+                        continue
+                    parsed = urlparse(uri)
+                    if parsed.scheme == 'file':
+                        path = unquote(parsed.path)
+                    else:
+                        path = uri
+                    if not path:
+                        continue
+                    rank = (-db_mtime, position)
+                    existing = best_rank.get(path)
+                    if existing is None or rank < existing:
+                        best_rank[path] = rank
+        except Exception:
             pass
         finally:
             if 'conn' in locals():
                 conn.close()
-                
-    return projects_list
+
+    return [p for p, _ in sorted(best_rank.items(), key=lambda kv: kv[1])]
 
 def fuzzy_match(query, text):
     """Simple fuzzy match: checks if query characters appear in text in order (case-insensitive)."""
@@ -123,7 +130,7 @@ def fuzzy_match(query, text):
             q_idx += 1
     return q_idx == len(query)
 
-def draw_menu(stdscr, selected_row_idx, projects, search_query="", pinned=set(), mode="insiders"):
+def draw_menu(stdscr, selected_row_idx, projects, search_query="", pinned=set(), mode="code"):
     stdscr.clear()
     h, w = stdscr.getmaxyx()
     
@@ -135,7 +142,7 @@ def draw_menu(stdscr, selected_row_idx, projects, search_query="", pinned=set(),
     # Pair 5: Mode Indicator (Green)
     
     # Title
-    mode_label = MODES.get(mode, MODES["insiders"])["label"]
+    mode_label = MODES.get(mode, MODES["code"])["label"]
     title = f" Project Launcher [{mode_label}] "
     if w > len(title):
         stdscr.attron(curses.color_pair(2) | curses.A_BOLD)
@@ -379,11 +386,11 @@ def main(stdscr):
     
     config = load_config()
     pinned = set(config.get("pinned", []))
-    mode = config.get("mode", "insiders")
+    mode = config.get("mode", "code")
     
     # Validate mode
     if mode not in MODE_ORDER:
-        mode = "insiders"
+        mode = "code"
     
     def refresh_projects():
         raw_projects = get_projects(mode)
@@ -401,9 +408,13 @@ def main(stdscr):
     search_query = ""
     
     while True:
-        # Sort projects: Pinned first, then others
-        # We do this dynamically to handle pinning toggles
-        sorted_projects = sorted(all_projects, key=lambda p: (0 if p in pinned else 1, p))
+        # Pinned first (preserving their recency order), then the rest
+        # in recency order as returned by get_projects().
+        sorted_projects = sorted(
+            enumerate(all_projects),
+            key=lambda ip: (0 if ip[1] in pinned else 1, ip[0]),
+        )
+        sorted_projects = [p for _, p in sorted_projects]
         
         # Filter by search
         if search_query:
@@ -425,7 +436,7 @@ def main(stdscr):
                 if filtered_projects:
                     selected = filtered_projects[current_row]
                     # Launch
-                    bin_name = MODES.get(mode, MODES["insiders"])["cmd"]
+                    bin_name = MODES.get(mode, MODES["code"])["cmd"]
                     subprocess.Popen([bin_name, selected], start_new_session=True)
                     return # Exit after launch? Or stay? Usually exit.
             elif key == 27: # ESC
@@ -482,7 +493,7 @@ def main(stdscr):
                     next_idx = (current_idx + 1) % len(MODE_ORDER)
                     mode = MODE_ORDER[next_idx]
                 except ValueError:
-                    mode = "insiders"
+                    mode = "code"
                     
                 config["mode"] = mode
                 save_config(config)
@@ -534,13 +545,13 @@ def main(stdscr):
                             # Add to projects list immediately?
                             # It will be added on next run or if we refresh.
                             # Let's just return to open it.
-                            bin_name = MODES.get(mode, MODES["insiders"])["cmd"]
+                            bin_name = MODES.get(mode, MODES["code"])["cmd"]
                             subprocess.Popen([bin_name, new_path], start_new_session=True)
                             return
                         except OSError:
                             pass
                     else:
-                        bin_name = MODES.get(mode, MODES["insiders"])["cmd"]
+                        bin_name = MODES.get(mode, MODES["code"])["cmd"]
                         subprocess.Popen([bin_name, new_path], start_new_session=True)
                         return
             elif key == ord('o') or key == ord('O'):
@@ -552,13 +563,13 @@ def main(stdscr):
                 
                 if location:
                     if os.path.exists(location):
-                        bin_name = MODES.get(mode, MODES["insiders"])["cmd"]
+                        bin_name = MODES.get(mode, MODES["code"])["cmd"]
                         subprocess.Popen([bin_name, location], start_new_session=True)
                         return
             elif key in [curses.KEY_ENTER, 10, 13]:
                 if filtered_projects:
                     selected = filtered_projects[current_row]
-                    bin_name = MODES.get(mode, MODES["insiders"])["cmd"]
+                    bin_name = MODES.get(mode, MODES["code"])["cmd"]
                     subprocess.Popen([bin_name, selected], start_new_session=True)
                     return
             
